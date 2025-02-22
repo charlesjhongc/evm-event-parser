@@ -27,25 +27,33 @@ function App() {
       setError("");
 
       const provider = new ethers.JsonRpcProvider(formData.rpcEndpoint);
-      const eventInterface = new ethers.Interface([formData.eventDef]);
+
+      const abi = [
+        "event CooldownStarted(address indexed holder, uint256 assets, uint256 shares)",
+      ];
+      const contract = new ethers.Contract(
+        formData.contractAddress,
+        abi,
+        provider
+      );
+      const eventInterface = contract.interface;
       const eventFragment = eventInterface.fragments[0];
       if (!eventFragment || eventFragment.type !== "event") {
         throw new Error("Invalid event definition");
       }
 
-      const contract = new ethers.Contract(
-        formData.contractAddress,
-        [formData.eventDef],
-        provider
-      );
-
       const eventName = eventFragment.name;
       const filter = contract.filters[eventName]();
 
+      const fromBlock = parseInt(formData.fromBlock);
+      const toBlock = parseInt(formData.toBlock);
+
+      console.log(fromBlock);
+      console.log(toBlock);
       const logs = await contract.queryFilter(
         filter,
-        "26530615",
-        formData.toBlock
+        isNaN(fromBlock) ? formData.fromBlock : fromBlock,
+        isNaN(toBlock) ? formData.toBlock : toBlock
       );
       const parsedEvents = logs.map((log) => {
         const parsed = eventInterface.parseLog(log);
@@ -53,10 +61,14 @@ function App() {
           blockNumber: log.blockNumber,
           txHash: log.transactionHash,
           args: Object.fromEntries(
-            parsed.fragment.inputs.map((input, i) => [
-              input.name,
-              parsed.args[i],
-            ])
+            parsed.fragment.inputs.map((input, i) => {
+              const value = parsed.args[i];
+              // Convert BigInt to string or number
+              return [
+                input.name,
+                typeof value === "bigint" ? value.toString() : value,
+              ];
+            })
           ),
         };
       });
@@ -156,7 +168,7 @@ function App() {
               {currentEvents.map((event, index) => (
                 <tr key={index}>
                   <td>{event.blockNumber}</td>
-                  <td>{event.txHash.slice(0, 10)}...</td>
+                  <td>{event.txHash}</td>
                   <td>
                     <pre>{JSON.stringify(event.args, null, 2)}</pre>
                   </td>

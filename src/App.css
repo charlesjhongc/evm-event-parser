@@ -1,6 +1,6 @@
 /* App.css (unchanged) */
 .App {
-  max-width: 800px;
+  max-width: 1400px;
   margin: 0 auto;
   padding: 20px;
   font-family: Arial, sans-serif;
@@ -89,6 +89,8 @@ td {
   border: 1px solid #ddd;
   text-align: left;
   font-size: 14px;
+  word-wrap: break-word; /* Ensures long text wraps instead of overflowing */
+  max-width: 300px; /* Optional: Limits width of cells to prevent excessive stretching */
 }
 
 th {
