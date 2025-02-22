@@ -21,12 +21,10 @@ function App() {
 
   const handleInputChange = (e) => {
     setFormData({ ...formData, [e.target.name]: e.target.value });
-  };
-
-  const handleInterfaceChange = (e) => {
-    const newABI = e.target.value.trim();
-    setFormData({ ...formData, contractABI: newABI });
-    parseAbi(newABI); // Parse ABI to update available events
+    if (e.target.name === "contractABI") {
+      const newABI = e.target.value.trim();
+      parseAbi(newABI); // Parse ABI to update available events
+    }
   };
 
   const parseAbi = (abi) => {
@@ -55,7 +53,7 @@ function App() {
     }
   };
 
-  const fetchEvents = async () => {
+  async function fetchEvents() {
     try {
       setLoading(true);
       setError("");
@@ -101,7 +99,7 @@ function App() {
     } finally {
       setLoading(false);
     }
-  };
+  }
 
   const indexOfLastEvent = currentPage * eventsPerPage;
   const indexOfFirstEvent = indexOfLastEvent - eventsPerPage;
@@ -132,10 +130,10 @@ function App() {
         <div className="form-group">
           <label>Interface Definition (JSON ABI):</label>
           <textarea
-            name="interfaceDef"
+            name="contractABI"
             placeholder='e.g. [{"type": "event", "name": "Transfer", "inputs": [{"name": "from", "type": "address", "indexed": true}, {"name": "to", "type": "address", "indexed": true}, {"name": "value", "type": "uint256"}]}]'
             value={formData.contractABI}
-            onChange={handleInterfaceChange}
+            onChange={handleInputChange}
           />
         </div>
 
