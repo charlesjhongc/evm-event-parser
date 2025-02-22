@@ -6,7 +6,7 @@ import "./App.css";
 function App() {
   const [formData, setFormData] = useState({
     contractAddress: "",
-    eventDef: "",
+    contractABI: "",
     fromBlock: "",
     toBlock: "",
     rpcEndpoint: "",
@@ -15,10 +15,44 @@ function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
+  const [availableEvents, setAvailableEvents] = useState([]); // Store available events from ABI
+  const [selectedEvent, setSelectedEvent] = useState(""); // Track selected event
   const eventsPerPage = 10;
 
   const handleInputChange = (e) => {
     setFormData({ ...formData, [e.target.name]: e.target.value });
+  };
+
+  const handleInterfaceChange = (e) => {
+    const newABI = e.target.value.trim();
+    setFormData({ ...formData, contractABI: newABI });
+    parseAbi(newABI); // Parse ABI to update available events
+  };
+
+  const parseAbi = (abi) => {
+    try {
+      if (!abi) {
+        setAvailableEvents([]);
+        setSelectedEvent("");
+        return;
+      }
+
+      const contractInterface = new ethers.Interface(abi);
+      const eventsFromAbi = contractInterface.fragments.filter(
+        (f) => f.type === "event"
+      );
+
+      if (eventsFromAbi.length === 0) {
+        throw new Error("No events found in the ABI definition");
+      }
+
+      setAvailableEvents(eventsFromAbi.map((event) => event.name));
+      setSelectedEvent(eventsFromAbi[0].name); // Default to first event if available
+    } catch (err) {
+      setError(`Error parsing ABI: ${err.message}`);
+      setAvailableEvents([]);
+      setSelectedEvent("");
+    }
   };
 
   const fetchEvents = async () => {
@@ -27,36 +61,23 @@ function App() {
       setError("");
 
       const provider = new ethers.JsonRpcProvider(formData.rpcEndpoint);
-
-      const abi = [
-        "event CooldownStarted(address indexed holder, uint256 assets, uint256 shares)",
-      ];
       const contract = new ethers.Contract(
         formData.contractAddress,
-        abi,
+        formData.contractABI,
         provider
       );
-      const eventInterface = contract.interface;
-      const eventFragment = eventInterface.fragments[0];
-      if (!eventFragment || eventFragment.type !== "event") {
-        throw new Error("Invalid event definition");
-      }
-
-      const eventName = eventFragment.name;
-      const filter = contract.filters[eventName]();
+      const filter = contract.filters[selectedEvent]();
 
       const fromBlock = parseInt(formData.fromBlock);
       const toBlock = parseInt(formData.toBlock);
 
-      console.log(fromBlock);
-      console.log(toBlock);
       const logs = await contract.queryFilter(
         filter,
         isNaN(fromBlock) ? formData.fromBlock : fromBlock,
         isNaN(toBlock) ? formData.toBlock : toBlock
       );
       const parsedEvents = logs.map((log) => {
-        const parsed = eventInterface.parseLog(log);
+        const parsed = contract.interface.parseLog(log);
         return {
           blockNumber: log.blockNumber,
           txHash: log.transactionHash,
@@ -89,6 +110,10 @@ function App() {
 
   const paginate = (pageNumber) => setCurrentPage(pageNumber);
 
+  const handleEventSelect = (e) => {
+    setSelectedEvent(e.target.value);
+  };
+
   return (
     <div className="App">
       <h1>EVM Event Parser</h1>
@@ -105,21 +130,37 @@ function App() {
         </div>
 
         <div className="form-group">
-          <label>Event Definition (Solidity):</label>
+          <label>Interface Definition (JSON ABI):</label>
           <textarea
-            name="eventDef"
-            placeholder="e.g. event CooldownStarted(address indexed holder, uint256 assets, uint256 shares)"
-            value={formData.eventDef}
-            onChange={handleInputChange}
+            name="interfaceDef"
+            placeholder='e.g. [{"type": "event", "name": "Transfer", "inputs": [{"name": "from", "type": "address", "indexed": true}, {"name": "to", "type": "address", "indexed": true}, {"name": "value", "type": "uint256"}]}]'
+            value={formData.contractABI}
+            onChange={handleInterfaceChange}
           />
         </div>
+
+        {availableEvents.length > 0 && (
+          <div className="form-group">
+            <label>Select Event to Parse:</label>
+            <select
+              value={selectedEvent}
+              onChange={handleEventSelect}
+              disabled={loading}
+            >
+              {availableEvents.map((eventName) => (
+                <option key={eventName} value={eventName}>
+                  {eventName}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
 
         <div className="form-group">
           <label>Start Block:</label>
           <input
             name="fromBlock"
-            placeholder="Enter block number or 'earliest', 'latest', 'pending'"
-            type="text"
+            placeholder="Enter a positive number"
             value={formData.fromBlock}
             onChange={handleInputChange}
           />
@@ -129,8 +170,7 @@ function App() {
           <label>End Block:</label>
           <input
             name="toBlock"
-            placeholder="Enter block number or 'earliest', 'latest', 'pending'"
-            type="text"
+            placeholder="Enter a positive number (optional)"
             value={formData.toBlock}
             onChange={handleInputChange}
           />
