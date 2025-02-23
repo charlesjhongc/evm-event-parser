@@ -1,7 +1,10 @@
-// App.jsx
 import React, { useState } from "react";
 import { ethers } from "ethers";
 import "./App.css";
+
+// TODO
+// allow specifying indexed params
+// convert bigint with decimal (allow select params name and decimal, called applyDecimal funciton)
 
 function App() {
   const [formData, setFormData] = useState({
@@ -19,15 +22,19 @@ function App() {
   const [selectedEvent, setSelectedEvent] = useState(""); // Track selected event
   const eventsPerPage = 10;
 
-  const handleInputChange = (e) => {
+  function handleInputChange(e) {
     setFormData({ ...formData, [e.target.name]: e.target.value });
     if (e.target.name === "contractABI") {
       const newABI = e.target.value.trim();
       parseAbi(newABI); // Parse ABI to update available events
     }
-  };
+  }
 
-  const parseAbi = (abi) => {
+  function handleEventSelect(e) {
+    setSelectedEvent(e.target.value);
+  }
+
+  function parseAbi(abi) {
     try {
       if (!abi) {
         setAvailableEvents([]);
@@ -51,7 +58,32 @@ function App() {
       setAvailableEvents([]);
       setSelectedEvent("");
     }
-  };
+  }
+
+  function DumpEvents({ events }) {
+    return (
+      <table>
+        <thead>
+          <tr>
+            <th>Block</th>
+            <th>Transaction Hash</th>
+            <th>Arguments</th>
+          </tr>
+        </thead>
+        <tbody>
+          {events.map((event, index) => (
+            <tr key={index}>
+              <td>{event.blockNumber}</td>
+              <td>{event.txHash}</td>
+              <td>
+                <pre>{JSON.stringify(event.args, null, 2)}</pre>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    );
+  }
 
   async function fetchEvents() {
     try {
@@ -75,13 +107,12 @@ function App() {
         isNaN(toBlock) ? formData.toBlock : toBlock
       );
       const parsedEvents = logs.map((log) => {
-        const parsed = contract.interface.parseLog(log);
         return {
           blockNumber: log.blockNumber,
           txHash: log.transactionHash,
           args: Object.fromEntries(
-            parsed.fragment.inputs.map((input, i) => {
-              const value = parsed.args[i];
+            log.fragment.inputs.map((input, i) => {
+              const value = log.args[i];
               // Convert BigInt to string or number
               return [
                 input.name,
@@ -105,12 +136,7 @@ function App() {
   const indexOfFirstEvent = indexOfLastEvent - eventsPerPage;
   const currentEvents = events.slice(indexOfFirstEvent, indexOfLastEvent);
   const totalPages = Math.ceil(events.length / eventsPerPage);
-
   const paginate = (pageNumber) => setCurrentPage(pageNumber);
-
-  const handleEventSelect = (e) => {
-    setSelectedEvent(e.target.value);
-  };
 
   return (
     <div className="App">
@@ -135,6 +161,16 @@ function App() {
             value={formData.contractABI}
             onChange={handleInputChange}
           />
+          <small style={{ display: "block", marginTop: "5px", color: "gray" }}>
+            You can compile solidity and get ABI using{" "}
+            <a
+              href="https://remix.ethereum.org/"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              Remix
+            </a>
+          </small>
         </div>
 
         {availableEvents.length > 0 && (
@@ -158,7 +194,7 @@ function App() {
           <label>Start Block:</label>
           <input
             name="fromBlock"
-            placeholder="Enter a positive number"
+            placeholder="Enter a block tag (e.g. 1234, -100, latest)"
             value={formData.fromBlock}
             onChange={handleInputChange}
           />
@@ -168,7 +204,7 @@ function App() {
           <label>End Block:</label>
           <input
             name="toBlock"
-            placeholder="Enter a positive number (optional)"
+            placeholder="Enter a block tag (e.g. 1234, -100, latest)"
             value={formData.toBlock}
             onChange={handleInputChange}
           />
@@ -194,26 +230,7 @@ function App() {
       {events.length > 0 && (
         <div className="results">
           <h2>Parsed Events ({events.length})</h2>
-          <table>
-            <thead>
-              <tr>
-                <th>Block</th>
-                <th>Transaction Hash</th>
-                <th>Arguments</th>
-              </tr>
-            </thead>
-            <tbody>
-              {currentEvents.map((event, index) => (
-                <tr key={index}>
-                  <td>{event.blockNumber}</td>
-                  <td>{event.txHash}</td>
-                  <td>
-                    <pre>{JSON.stringify(event.args, null, 2)}</pre>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <DumpEvents events={currentEvents} />
 
           <div className="pagination">
             <button
