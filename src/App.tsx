@@ -1,10 +1,7 @@
-import React, { useState } from "react";
-import { ethers } from "ethers";
+import { useState } from "react";
+import { createPublicClient, http } from "viem";
+import { ERC20_ABI, ERC721_ABI } from "./abi.tsx";
 import "./App.css";
-
-// TODO
-// allow specifying indexed params
-// convert bigint with decimal (allow select params name and decimal, called applyDecimal funciton)
 
 function App() {
   const [formData, setFormData] = useState({
@@ -17,16 +14,27 @@ function App() {
   const [events, setEvents] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [customABI, setCustomABI] = useState([]);
+  const [doCustom, setDoCustom] = useState(true);
+  const [indexedFilters, setIndexedFilters] = useState({});
+  const [eventsABI, setEventsABI] = useState([]);
+  const [selectedEvent, setSelectedEvent] = useState("");
+  const [clickedButton, setClickedButton] = useState(0);
   const [currentPage, setCurrentPage] = useState(1);
-  const [availableEvents, setAvailableEvents] = useState([]); // Store available events from ABI
-  const [selectedEvent, setSelectedEvent] = useState(""); // Track selected event
-  const eventsPerPage = 10;
+  const eventsPerPage = 15;
 
   function handleInputChange(e) {
     setFormData({ ...formData, [e.target.name]: e.target.value });
     if (e.target.name === "contractABI") {
       const newABI = e.target.value.trim();
-      parseAbi(newABI); // Parse ABI to update available events
+      if (!newABI) {
+        setEventsABI([]);
+        setSelectedEvent("");
+        return;
+      }
+      const abi = JSON.parse(newABI);
+      setCustomABI(abi);
+      updateEventList(abi); // update available events
     }
   }
 
@@ -34,29 +42,59 @@ function App() {
     setSelectedEvent(e.target.value);
   }
 
-  function parseAbi(abi) {
+  function handleFilterChange(paramName, value) {
+    setIndexedFilters({ ...indexedFilters, [paramName]: value });
+  }
+
+  function handleSelectInterface(type: "ERC20" | "ERC721" | "Custom") {
+    if (type === "ERC20") {
+      setError("");
+      setClickedButton(1);
+      updateEventList(ERC20_ABI);
+      setDoCustom(false);
+      setError("");
+    } else if (type === "ERC721") {
+      setError("");
+      setClickedButton(2);
+      updateEventList(ERC721_ABI);
+      setDoCustom(false);
+    } else {
+      setError("");
+      setClickedButton(0);
+      setDoCustom(true);
+      updateEventList(customABI); // update available events
+    }
+  }
+
+  function bigIngStringify(key, value) {
+    if (typeof value === "bigint") {
+      return value.toString();
+    }
+    return value;
+  }
+
+  function updateEventList(abi) {
     try {
-      if (!abi) {
-        setAvailableEvents([]);
-        setSelectedEvent("");
-        return;
-      }
+      const abiEvents = abi.filter((item) => item.type === "event");
 
-      const contractInterface = new ethers.Interface(abi);
-      const eventsFromAbi = contractInterface.fragments.filter(
-        (f) => f.type === "event"
-      );
-
-      if (eventsFromAbi.length === 0) {
+      if (abiEvents.length === 0) {
         throw new Error("No events found in the ABI definition");
       }
 
-      setAvailableEvents(eventsFromAbi.map((event) => event.name));
-      setSelectedEvent(eventsFromAbi[0].name); // Default to first event if available
+      setEventsABI(abiEvents);
+      setSelectedEvent(abiEvents[0].name); // Default to first event if available
     } catch (err) {
-      setError(`Error parsing ABI: ${err.message}`);
-      setAvailableEvents([]);
+      setEventsABI([]);
       setSelectedEvent("");
+    }
+  }
+
+  function parseBlockTag(str, latestBlockNum) {
+    try {
+      let parsed = BigInt(str);
+      return parsed < 0 ? latestBlockNum + parsed : parsed;
+    } catch (error) {
+      return str;
     }
   }
 
@@ -76,7 +114,7 @@ function App() {
               <td>{event.blockNumber}</td>
               <td>{event.txHash}</td>
               <td>
-                <pre>{JSON.stringify(event.args, null, 2)}</pre>
+                <pre>{JSON.stringify(event.args, bigIngStringify, 2)}</pre>
               </td>
             </tr>
           ))}
@@ -90,39 +128,37 @@ function App() {
       setLoading(true);
       setError("");
 
-      const provider = new ethers.JsonRpcProvider(formData.rpcEndpoint);
-      const contract = new ethers.Contract(
-        formData.contractAddress,
-        formData.contractABI,
-        provider
-      );
-      const filter = contract.filters[selectedEvent]();
+      const publicClient = createPublicClient({
+        transport: http(formData.rpcEndpoint),
+      });
 
-      const fromBlock = parseInt(formData.fromBlock);
-      const toBlock = parseInt(formData.toBlock);
-
-      const logs = await contract.queryFilter(
-        filter,
-        isNaN(fromBlock) ? formData.fromBlock : fromBlock,
-        isNaN(toBlock) ? formData.toBlock : toBlock
+      const latestBlk = await publicClient.getBlock();
+      const argsFilters = Object.entries(indexedFilters).reduce(
+        (acc, [key, value]) => {
+          if (value.length != 0) {
+            acc[key] = value.split(",").map((item) => item.trim());
+          }
+          return acc;
+        },
+        {}
       );
+      const logs = await publicClient.getContractEvents({
+        abi: eventsABI,
+        address: formData.contractAddress,
+        eventName: selectedEvent,
+        fromBlock: parseBlockTag(formData.fromBlock, latestBlk.number),
+        toBlock: parseBlockTag(formData.toBlock, latestBlk.number),
+        args: argsFilters,
+      });
       const parsedEvents = logs.map((log) => {
         return {
           blockNumber: log.blockNumber,
           txHash: log.transactionHash,
-          args: Object.fromEntries(
-            log.fragment.inputs.map((input, i) => {
-              const value = log.args[i];
-              // Convert BigInt to string or number
-              return [
-                input.name,
-                typeof value === "bigint" ? value.toString() : value,
-              ];
-            })
-          ),
+          args: log.args,
         };
       });
 
+      parsedEvents.name = selectedEvent;
       setEvents(parsedEvents);
       setCurrentPage(1);
     } catch (err) {
@@ -154,39 +190,90 @@ function App() {
         </div>
 
         <div className="form-group">
-          <label>Interface Definition (JSON ABI):</label>
-          <textarea
-            name="contractABI"
-            placeholder='e.g. [{"type": "event", "name": "Transfer", "inputs": [{"name": "from", "type": "address", "indexed": true}, {"name": "to", "type": "address", "indexed": true}, {"name": "value", "type": "uint256"}]}]'
-            value={formData.contractABI}
-            onChange={handleInputChange}
-          />
-          <small style={{ display: "block", marginTop: "5px", color: "gray" }}>
-            You can compile solidity and get ABI using{" "}
-            <a
-              href="https://remix.ethereum.org/"
-              target="_blank"
-              rel="noopener noreferrer"
+          <label>Interface Definition</label>
+          <div style={{ display: "flex", gap: "10px", marginBottom: "10px" }}>
+            <button
+              className={clickedButton === 0 ? "active" : "inactive"}
+              onClick={() => handleSelectInterface("Custom (JSON ABI)")}
             >
-              Remix
-            </a>
-          </small>
+              Custom
+            </button>
+            <button
+              className={clickedButton === 1 ? "active" : "inactive"}
+              onClick={() => handleSelectInterface("ERC20")}
+            >
+              ERC20
+            </button>
+            <button
+              className={clickedButton === 2 ? "active" : "inactive"}
+              onClick={() => handleSelectInterface("ERC721")}
+            >
+              ERC721
+            </button>
+          </div>
+          {doCustom && (
+            <div>
+              <textarea
+                name="contractABI"
+                placeholder='e.g. [{"type": "event", "name": "Transfer", "inputs": [{"name": "from", "type": "address", "indexed": true}, {"name": "to", "type": "address", "indexed": true}, {"name": "value", "type": "uint256"}]}]'
+                value={formData.contractABI}
+                onChange={handleInputChange}
+              />
+              <small
+                style={{ display: "block", marginTop: "5px", color: "gray" }}
+              >
+                You can compile solidity and get ABI using{" "}
+                <a
+                  href="https://remix.ethereum.org/"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  Remix
+                </a>
+              </small>
+            </div>
+          )}
         </div>
 
-        {availableEvents.length > 0 && (
+        {eventsABI.length > 0 && (
           <div className="form-group">
-            <label>Select Event to Parse:</label>
-            <select
-              value={selectedEvent}
-              onChange={handleEventSelect}
-              disabled={loading}
-            >
-              {availableEvents.map((eventName) => (
-                <option key={eventName} value={eventName}>
-                  {eventName}
-                </option>
-              ))}
-            </select>
+            <div>
+              <label>Select Event to Parse:</label>
+              <select
+                value={selectedEvent}
+                onChange={handleEventSelect}
+                disabled={loading}
+              >
+                {eventsABI.map((event) => (
+                  <option key={event.name} value={event.name}>
+                    {event.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="advanced-filter">
+              <div className="advanced-filter-label">
+                Advanced Filter (optional)
+              </div>
+              {eventsABI
+                .find((event) => event.name === selectedEvent)
+                .inputs.filter((input) => input.indexed === true)
+                .map((param) => (
+                  <div key={param.name} className="advanced-input">
+                    <label>
+                      {param.name} ({param.type}):
+                      <input
+                        type="text"
+                        value={indexedFilters[param.name] || ""}
+                        onChange={(e) =>
+                          handleFilterChange(param.name, e.target.value)
+                        }
+                        placeholder={`Enter ${param.name} value`}
+                      />
+                    </label>
+                  </div>
+                ))}
+            </div>
           </div>
         )}
 
@@ -194,7 +281,7 @@ function App() {
           <label>Start Block:</label>
           <input
             name="fromBlock"
-            placeholder="Enter a block tag (e.g. 1234, -100, latest)"
+            placeholder="Enter a block tag (bigint | 'latest')"
             value={formData.fromBlock}
             onChange={handleInputChange}
           />
@@ -204,7 +291,7 @@ function App() {
           <label>End Block:</label>
           <input
             name="toBlock"
-            placeholder="Enter a block tag (e.g. 1234, -100, latest)"
+            placeholder="Enter a block tag (bigint | 'latest')"
             value={formData.toBlock}
             onChange={handleInputChange}
           />
@@ -229,7 +316,9 @@ function App() {
 
       {events.length > 0 && (
         <div className="results">
-          <h2>Parsed Events ({events.length})</h2>
+          <h2>
+            Parsed Events : {events.name} (total:{events.length})
+          </h2>
           <DumpEvents events={currentEvents} />
 
           <div className="pagination">
