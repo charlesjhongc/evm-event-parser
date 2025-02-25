@@ -9,4 +9,4 @@ $ npm install
 $ npm start
 ```
 
-Open [http://localhost:3000](http://localhost:3000) to view it in your browser.
+Open [http://localhost:5173/evm-event-parser/](http://localhost:5173/evm-event-parser/) to view it in your browser.
