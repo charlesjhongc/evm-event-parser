@@ -144,7 +144,9 @@ function App() {
       );
       const logs = await publicClient.getContractEvents({
         abi: eventsABI,
-        address: formData.contractAddress,
+        ...(formData.contractAddress && {
+          address: formData.contractAddress,
+        }),
         eventName: selectedEvent,
         fromBlock: parseBlockTag(formData.fromBlock, latestBlk.number),
         toBlock: parseBlockTag(formData.toBlock, latestBlk.number),
