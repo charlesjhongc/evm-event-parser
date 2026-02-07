@@ -3,6 +3,24 @@ import { createPublicClient, http } from "viem";
 import { ERC20_ABI, ERC721_ABI } from "./abi.tsx";
 import "./App.css";
 
+interface AbiEventInput {
+  name: string;
+  type: string;
+  indexed?: boolean;
+}
+
+interface AbiEventItem {
+  type: string;
+  name: string;
+  inputs?: AbiEventInput[];
+}
+
+interface EventLogEntry {
+  blockNumber: bigint | null;
+  txHash: `0x${string}` | null;
+  args: Record<string, unknown> | readonly unknown[];
+}
+
 function App() {
   const [formData, setFormData] = useState({
     contractAddress: "",
@@ -11,19 +29,19 @@ function App() {
     toBlock: "",
     rpcEndpoint: "",
   });
-  const [events, setEvents] = useState([]);
+  const [events, setEvents] = useState<EventLogEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [customABI, setCustomABI] = useState([]);
+  const [customABI, setCustomABI] = useState<AbiEventItem[]>([]);
   const [doCustom, setDoCustom] = useState(true);
-  const [indexedFilters, setIndexedFilters] = useState({});
-  const [eventsABI, setEventsABI] = useState([]);
+  const [indexedFilters, setIndexedFilters] = useState<Record<string, string>>({});
+  const [eventsABI, setEventsABI] = useState<AbiEventItem[]>([]);
   const [selectedEvent, setSelectedEvent] = useState("");
   const [clickedButton, setClickedButton] = useState(0);
   const [currentPage, setCurrentPage] = useState(1);
   const eventsPerPage = 15;
 
-  function handleInputChange(e) {
+  function handleInputChange(e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) {
     setFormData({ ...formData, [e.target.name]: e.target.value });
     if (e.target.name === "contractABI") {
       const newABI = e.target.value.trim();
@@ -32,17 +50,17 @@ function App() {
         setSelectedEvent("");
         return;
       }
-      const abi = JSON.parse(newABI);
+      const abi = JSON.parse(newABI) as AbiEventItem[];
       setCustomABI(abi);
       updateEventList(abi); // update available events
     }
   }
 
-  function handleEventSelect(e) {
+  function handleEventSelect(e: React.ChangeEvent<HTMLSelectElement>) {
     setSelectedEvent(e.target.value);
   }
 
-  function handleFilterChange(paramName, value) {
+  function handleFilterChange(paramName: string, value: string) {
     setIndexedFilters({ ...indexedFilters, [paramName]: value });
   }
 
@@ -50,13 +68,13 @@ function App() {
     if (type === "ERC20") {
       setError("");
       setClickedButton(1);
-      updateEventList(ERC20_ABI);
+      updateEventList(ERC20_ABI as AbiEventItem[]);
       setDoCustom(false);
       setError("");
     } else if (type === "ERC721") {
       setError("");
       setClickedButton(2);
-      updateEventList(ERC721_ABI);
+      updateEventList(ERC721_ABI as AbiEventItem[]);
       setDoCustom(false);
     } else {
       setError("");
@@ -66,14 +84,14 @@ function App() {
     }
   }
 
-  function bigIngStringify(key, value) {
+  function bigIntStringify(_key: string, value: unknown): unknown {
     if (typeof value === "bigint") {
       return value.toString();
     }
     return value;
   }
 
-  function updateEventList(abi) {
+  function updateEventList(abi: AbiEventItem[]) {
     try {
       const abiEvents = abi.filter((item) => item.type === "event");
 
@@ -83,22 +101,42 @@ function App() {
 
       setEventsABI(abiEvents);
       setSelectedEvent(abiEvents[0].name); // Default to first event if available
-    } catch (err) {
+    } catch {
       setEventsABI([]);
       setSelectedEvent("");
     }
   }
 
-  function parseBlockTag(str, latestBlockNum) {
+  function parseBlockTag(str: string, latestBlockNum: bigint): bigint | string {
+    const trimmed = str.trim();
+    if (trimmed === "") {
+      return latestBlockNum;
+    }
+    const lower = trimmed.toLowerCase();
+    // Tag form: "latest", "latest +100", "latest-50"
+    if (lower === "latest") {
+      return latestBlockNum;
+    }
+    const latestWithOffset = lower.match(/^latest\s*([+-]?\d+)$/);
+    if (latestWithOffset) {
+      return latestBlockNum + BigInt(latestWithOffset[1]);
+    }
+    // Pure number: leading +- = relative to latest, else absolute block number
     try {
-      let parsed = BigInt(str);
-      return parsed < 0 ? latestBlockNum + parsed : parsed;
-    } catch (error) {
+      const parsed = BigInt(trimmed);
+      if (trimmed.startsWith("+")) {
+        return latestBlockNum + parsed;
+      }
+      if (trimmed.startsWith("-")) {
+        return latestBlockNum - BigInt(trimmed.slice(1));
+      }
+      return parsed;
+    } catch {
       return str;
     }
   }
 
-  function DumpEvents({ events }) {
+  function DumpEvents({ events }: { events: EventLogEntry[] }) {
     return (
       <table>
         <thead>
@@ -114,7 +152,7 @@ function App() {
               <td>{event.blockNumber}</td>
               <td>{event.txHash}</td>
               <td>
-                <pre>{JSON.stringify(event.args, bigIngStringify, 2)}</pre>
+                <pre>{JSON.stringify(event.args, bigIntStringify, 2)}</pre>
               </td>
             </tr>
           ))}
@@ -134,37 +172,39 @@ function App() {
 
       const latestBlk = await publicClient.getBlock();
       const argsFilters = Object.entries(indexedFilters).reduce(
-        (acc, [key, value]) => {
-          if (value.length != 0) {
-            acc[key] = value.split(",").map((item) => item.trim());
+        (acc: Record<string, string[]>, [key, value]) => {
+          if (value.length !== 0) {
+            acc[key] = value.split(",").map((item: string) => item.trim());
           }
           return acc;
         },
         {}
       );
+      const fromBlock = parseBlockTag(formData.fromBlock, latestBlk.number);
+      const toBlock = parseBlockTag(formData.toBlock, latestBlk.number);
       const logs = await publicClient.getContractEvents({
         abi: eventsABI,
         ...(formData.contractAddress && {
-          address: formData.contractAddress,
+          address: formData.contractAddress as `0x${string}`,
         }),
         eventName: selectedEvent,
-        fromBlock: parseBlockTag(formData.fromBlock, latestBlk.number),
-        toBlock: parseBlockTag(formData.toBlock, latestBlk.number),
+        fromBlock: typeof fromBlock === "bigint" ? fromBlock : undefined,
+        toBlock: typeof toBlock === "bigint" ? toBlock : undefined,
         args: argsFilters,
       });
-      const parsedEvents = logs.map((log) => {
+      const parsedEvents: EventLogEntry[] = logs.map((log) => {
+        const logWithArgs = log as { blockNumber: bigint; transactionHash: `0x${string}`; args?: Record<string, unknown> };
         return {
-          blockNumber: log.blockNumber,
-          txHash: log.transactionHash,
-          args: log.args,
+          blockNumber: logWithArgs.blockNumber,
+          txHash: logWithArgs.transactionHash,
+          args: logWithArgs.args ?? {},
         };
       });
 
-      parsedEvents.name = selectedEvent;
       setEvents(parsedEvents);
       setCurrentPage(1);
     } catch (err) {
-      setError(`Error: ${err.message}`);
+      setError(`Error: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
       setLoading(false);
     }
@@ -174,7 +214,7 @@ function App() {
   const indexOfFirstEvent = indexOfLastEvent - eventsPerPage;
   const currentEvents = events.slice(indexOfFirstEvent, indexOfLastEvent);
   const totalPages = Math.ceil(events.length / eventsPerPage);
-  const paginate = (pageNumber) => setCurrentPage(pageNumber);
+  const paginate = (pageNumber: number) => setCurrentPage(pageNumber);
 
   return (
     <div className="App">
@@ -196,7 +236,7 @@ function App() {
           <div style={{ display: "flex", gap: "10px", marginBottom: "10px" }}>
             <button
               className={clickedButton === 0 ? "active" : "inactive"}
-              onClick={() => handleSelectInterface("Custom (JSON ABI)")}
+              onClick={() => handleSelectInterface("Custom")}
             >
               Custom
             </button>
@@ -257,16 +297,15 @@ function App() {
               <div className="advanced-filter-label">
                 Advanced Filter (optional)
               </div>
-              {eventsABI
+              {(eventsABI
                 .find((event) => event.name === selectedEvent)
-                .inputs.filter((input) => input.indexed === true)
-                .map((param) => (
+                ?.inputs?.filter((input: AbiEventInput) => input.indexed === true) ?? []).map((param) => (
                   <div key={param.name} className="advanced-input">
                     <label>
                       {param.name} ({param.type}):
                       <input
                         type="text"
-                        value={indexedFilters[param.name] || ""}
+                        value={indexedFilters[param.name] ?? ""}
                         onChange={(e) =>
                           handleFilterChange(param.name, e.target.value)
                         }
@@ -283,7 +322,7 @@ function App() {
           <label>Start Block:</label>
           <input
             name="fromBlock"
-            placeholder="Enter a block tag (bigint | 'latest')"
+            placeholder="e.g. 12345, latest, latest -100, +500"
             value={formData.fromBlock}
             onChange={handleInputChange}
           />
@@ -293,7 +332,7 @@ function App() {
           <label>End Block:</label>
           <input
             name="toBlock"
-            placeholder="Enter a block tag (bigint | 'latest')"
+            placeholder="e.g. 12345, latest, latest +0, -50"
             value={formData.toBlock}
             onChange={handleInputChange}
           />
@@ -319,7 +358,7 @@ function App() {
       {events.length > 0 && (
         <div className="results">
           <h2>
-            Parsed Events : {events.name} (total:{events.length})
+            Parsed Events : {selectedEvent} (total:{events.length})
           </h2>
           <DumpEvents events={currentEvents} />
 
